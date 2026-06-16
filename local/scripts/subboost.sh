@@ -252,6 +252,7 @@ update_cmd() {
   fi
   compose pull
   compose up -d --remove-orphans
+  compose up -d --no-deps --force-recreate app
   status_cmd
 }
 
@@ -291,6 +292,7 @@ EOF
 
 restart_cmd() {
   compose up -d --remove-orphans
+  compose up -d --no-deps --force-recreate app
   status_cmd
 }
 

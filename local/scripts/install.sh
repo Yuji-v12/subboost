@@ -620,6 +620,7 @@ main() {
   compose pull
   say "Starting SubBoost..."
   compose up -d --remove-orphans
+  compose up -d --no-deps --force-recreate app
   wait_for_health "$(env_value SUBBOOST_PORT)"
 
   say ""
