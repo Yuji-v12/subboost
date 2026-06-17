@@ -148,6 +148,75 @@ ENV
     expect(result.stdout).toContain("Doctor: OK");
   });
 
+  it("waits for health before reporting update status", () => {
+    const script = `
+      set -Eeuo pipefail
+      home="$(mktemp -d)"
+      trap 'rm -rf "$home"' EXIT
+      cat > "$home/.env" <<'ENV'
+SUBBOOST_IMAGE=image
+POSTGRES_DB=subboost
+POSTGRES_USER=subboost
+POSTGRES_PASSWORD=password
+DATABASE_URL=postgresql://subboost:password@db:5432/subboost?schema=public
+ENCRYPTION_KEY=key
+JWT_SECRET=jwt
+CRON_SECRET=cron
+APP_URL=http://127.0.0.1:31000
+SUBBOOST_PORT=31000
+ENV
+      : > "$home/docker-compose.yml"
+      export SUBBOOST_SCRIPT_SOURCE_ONLY=1
+      export SUBBOOST_HOME="$home"
+      export SUBBOOST_DOCTOR_HEALTH_ATTEMPTS=3
+      export SUBBOOST_DOCTOR_HEALTH_INTERVAL_SECONDS=0
+      source local/scripts/subboost.sh
+      docker() {
+        if [ "$1" = "info" ]; then return 0; fi
+        if [ "$1" = "compose" ]; then
+          case "$*" in
+            "compose version"*) return 0 ;;
+            *" config") return 0 ;;
+            *" pull") return 0 ;;
+            *" up -d --remove-orphans") return 0 ;;
+            *" up -d --no-deps --force-recreate app") return 0 ;;
+            *" ps -q app") printf 'app-id\\n'; return 0 ;;
+            *" ps -q db") printf 'db-id\\n'; return 0 ;;
+            *" ps -q cron") printf 'cron-id\\n'; return 0 ;;
+          esac
+        fi
+        if [ "$1" = "inspect" ]; then
+          case "$*" in
+            *".State.Status"*) printf 'running\\n'; return 0 ;;
+            *".State.Health"*) printf 'healthy\\n'; return 0 ;;
+          esac
+        fi
+        return 0
+      }
+      curl_count_file="$home/curl-count"
+      printf '0\\n' > "$curl_count_file"
+      curl() {
+        count="$(cat "$curl_count_file")"
+        count=$((count + 1))
+        printf '%s\\n' "$count" > "$curl_count_file"
+        case "$*" in
+          *"/api/health/live"*) return 0 ;;
+          *"/api/health/ready"*) [ "$count" -ge 5 ]; return $? ;;
+        esac
+        return 1
+      }
+      update_cmd
+      printf 'curl_count=%s\\n' "$(cat "$curl_count_file")"
+    `;
+
+    const result = runBash(script);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("健康检查: 正常");
+    expect(result.stdout).not.toContain("健康检查: 异常");
+    expect(result.stdout).toContain("curl_count=7");
+  });
+
   it("updates exact env keys without removing similarly prefixed names", () => {
     const script = `
       set -Eeuo pipefail

@@ -73,12 +73,11 @@ prompt() {
     return 0
   fi
   if { exec 3<>/dev/tty; } 2>/dev/null; then
-    printf '%s' "$message" >&3
-    IFS= read -r answer <&3 || answer=""
-    printf '\n' >&3
+    if [ -t 3 ] && printf '%s' "$message" >&3 2>/dev/null; then
+      IFS= read -r answer <&3 2>/dev/null || answer=""
+      printf '\n' >&3 2>/dev/null || true
+    fi
     exec 3>&-
-  else
-    answer=""
   fi
   if [ -n "$answer" ]; then printf '%s\n' "$answer"; else printf '%s\n' "$default_value"; fi
 }

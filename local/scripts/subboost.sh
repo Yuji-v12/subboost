@@ -293,6 +293,12 @@ update_cmd() {
   compose pull
   compose up -d --remove-orphans
   compose up -d --no-deps --force-recreate app
+  if ! wait_for_health; then
+    local health_status
+    health_status="$(health_status_code)"
+    status_cmd
+    die "$(doctor_health_failure_message "$health_status")"
+  fi
   status_cmd
 }
 
