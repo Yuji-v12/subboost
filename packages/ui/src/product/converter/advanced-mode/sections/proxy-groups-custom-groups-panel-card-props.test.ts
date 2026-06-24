@@ -72,6 +72,7 @@ vi.mock("./proxy-group-name-editor", () => ({
     return name ? `${draft.emoji?.trim() || "C"} ${name}` : "";
   },
   parseProxyGroupNameDraft: (value: string, emoji: string) => ({ emoji, name: value.replace(/^\\S+\\s+/, "") }),
+  pickRandomEmoji: () => "C",
   ProxyGroupNameEditor: () => null,
   toProxyGroupNameDraft: (value: { emoji?: string; name?: string }) => value,
 }));
