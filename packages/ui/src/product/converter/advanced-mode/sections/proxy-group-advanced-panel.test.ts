@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   buttons: [] as any[],
   inputs: [] as any[],
   store: {} as Record<string, any>,
+  toast: vi.fn(),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -31,6 +32,10 @@ vi.mock("@subboost/ui/components/ui/input", () => ({
     mocks.inputs.push(props);
     return React.createElement("input", props);
   },
+}));
+
+vi.mock("@subboost/ui/components/ui/toaster", () => ({
+  toast: mocks.toast,
 }));
 
 vi.mock("@subboost/ui/lib/utils", () => ({
@@ -120,10 +125,21 @@ describe("ProxyGroupAdvancedPanel", () => {
     expect(html).not.toContain("剩余流量");
     expect(html).toContain("US Source");
     expect(html).toContain("DIRECT");
+    expect(html).toContain("已启用成员");
+    expect(html).toContain("未启用成员");
+    expect(html).not.toContain("规则组");
     expect(html).toContain("rules-content");
     expect(html).toContain("还没有分流规则");
     expect(html).toContain("max-h-52 space-y-1.5 overflow-y-auto pr-1 custom-scrollbar");
     expect(mocks.inputs.map((input) => input.value)).toEqual(["Source", "Japan"]);
+    expect(mocks.buttons.map((button) => button.title)).toEqual(
+      expect.arrayContaining([
+        "添加全部节点",
+        "删除全部节点",
+        "添加全部代理组",
+        "删除全部代理组",
+      ]),
+    );
 
     mocks.inputs[0].onChange({ target: { value: "IEPL" } });
     const excludeButton = mocks.buttons.find((button) => button.title === "排除");
@@ -159,7 +175,7 @@ describe("ProxyGroupAdvancedPanel", () => {
     );
 
     expect(html).toContain("暂无可匹配的导入源");
-    expect(html).toContain("暂无已启用的节点或代理组");
+    expect(html).toContain("暂无已启用成员");
     expect(html).toContain("DIRECT");
     expect(html).toContain("REJECT");
     expect(html).toContain("existing-rules");
@@ -196,7 +212,7 @@ describe("ProxyGroupAdvancedPanel", () => {
     expect(html).toContain("#1 订阅链接");
     expect(html).toContain("#2 YAML 配置");
     expect(html).toContain("#3 节点链接");
-    expect(html).toContain("暂无已启用的节点或代理组");
+    expect(html).toContain("暂无已启用成员");
   });
 
   it("previews enabled members for a disabled built-in proxy group", () => {
@@ -220,7 +236,7 @@ describe("ProxyGroupAdvancedPanel", () => {
     expect(html).toContain("US Source");
     expect(html).toContain("Japan Source");
     expect(html).toContain("max-h-52 overflow-y-auto pr-1 custom-scrollbar flex flex-wrap gap-1.5");
-    expect(html).not.toContain("暂无已启用的节点或代理组");
+    expect(html).not.toContain("暂无已启用成员");
   });
 
   it("previews enabled members for a disabled custom proxy group", () => {
@@ -245,7 +261,7 @@ describe("ProxyGroupAdvancedPanel", () => {
 
     expect(html).toContain("US Source");
     expect(html).toContain("Japan Source");
-    expect(html).not.toContain("暂无已启用的节点或代理组");
+    expect(html).not.toContain("暂无已启用成员");
   });
 
   it("normalizes advanced member helpers without rendering the panel", () => {

@@ -5,6 +5,7 @@ import { Plus, X } from "lucide-react";
 import { Badge } from "@subboost/ui/components/ui/badge";
 import { Button } from "@subboost/ui/components/ui/button";
 import { Input } from "@subboost/ui/components/ui/input";
+import { toast } from "@subboost/ui/components/ui/toaster";
 import { cn } from "@subboost/ui/lib/utils";
 import { PROXY_GROUP_MODULES, generateProxyGroups } from "@subboost/core/generator/proxy-groups";
 import { resolveProxyGroupModuleName } from "@subboost/core/proxy-group-name";
@@ -20,24 +21,31 @@ import type {
 } from "@subboost/core/types/config";
 import type { ParsedNode } from "@subboost/core/types/node";
 import { useConfigStore } from "@subboost/ui/store/config-store";
+import {
+  buildAddAllMembersPatch,
+  buildRemoveAllMembersPatch,
+  findCycleCreatingProxyGroupKeys,
+  insertMemberAfterProtected,
+  isNodeMember,
+  isProxyGroupMember,
+  normalizeList,
+  withMember,
+  withoutMember,
+  type ResolvedMember,
+} from "./proxy-group-member-bulk";
 
+export {
+  insertMemberAfterProtected,
+  normalizeList,
+  withMember,
+  withoutMember,
+} from "./proxy-group-member-bulk";
+export type { ResolvedMember } from "./proxy-group-member-bulk";
 type AdvancedTarget = {
   kind: "module" | "custom";
   id: string;
   name: string;
 };
-
-export type ResolvedMember = {
-  key: string;
-  ref: ProxyGroupMemberRef;
-  name: string;
-  kind: ProxyGroupMemberRef["kind"];
-};
-
-export function normalizeList<T>(value: readonly T[] | undefined): T[] {
-  return Array.isArray(value) ? [...value] : [];
-}
-
 export function memberLabel(member: ResolvedMember): string {
   if (member.kind === "direct") return "DIRECT";
   if (member.kind === "reject") return "REJECT";
@@ -96,40 +104,6 @@ export function toggleValue<T extends string>(list: readonly T[] | undefined, va
   else next.add(value);
   return Array.from(next);
 }
-
-export function withoutMember(list: readonly ProxyGroupMemberRef[] | undefined, key: string): ProxyGroupMemberRef[] {
-  return normalizeList(list).filter((member) => getProxyGroupMemberKey(member) !== key);
-}
-
-export function withMember(list: readonly ProxyGroupMemberRef[] | undefined, member: ProxyGroupMemberRef): ProxyGroupMemberRef[] {
-  const key = getProxyGroupMemberKey(member);
-  return [...withoutMember(list, key), member];
-}
-
-const PROTECTED_INSERT_KEYS = new Set([
-  "direct:DIRECT",
-  "reject:REJECT",
-  "module:auto",
-  "module:select",
-]);
-
-export function insertMemberAfterProtected(
-  currentMembers: ResolvedMember[],
-  member: ProxyGroupMemberRef,
-): ProxyGroupMemberRef[] {
-  const key = getProxyGroupMemberKey(member);
-  const current = currentMembers
-    .map((item) => item.ref)
-    .filter((item) => getProxyGroupMemberKey(item) !== key);
-  let insertAt = 0;
-  current.forEach((item, index) => {
-    if (PROTECTED_INSERT_KEYS.has(getProxyGroupMemberKey(item))) {
-      insertAt = index + 1;
-    }
-  });
-  return [...current.slice(0, insertAt), member, ...current.slice(insertAt)];
-}
-
 function CountBadge({ children }: { children: React.ReactNode }) {
   return (
     <Badge variant="outline" className="ml-auto border-white/10 bg-white/5 text-[10px] text-white/45">
@@ -137,7 +111,60 @@ function CountBadge({ children }: { children: React.ReactNode }) {
     </Badge>
   );
 }
-
+function BulkMemberActions({
+  label,
+  includedCount,
+  totalCount,
+  onAddAll,
+  onRemoveAll,
+  addDisabled,
+  removeDisabled,
+}: {
+  label: "节点" | "代理组";
+  includedCount: number;
+  totalCount: number;
+  onAddAll: () => void;
+  onRemoveAll: () => void;
+  addDisabled: boolean;
+  removeDisabled: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded border border-white/10 bg-white/[0.03] px-2 py-1.5">
+      <span className="text-[11px] font-medium text-white/55">{label}</span>
+      <Badge variant="outline" className="border-white/10 bg-white/5 text-[10px] text-white/40">
+        {includedCount}/{totalCount}
+      </Badge>
+      <div className="ml-auto flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-1.5 text-[10px] text-white/45 hover:bg-emerald-500/10 hover:text-emerald-200 disabled:pointer-events-none disabled:opacity-30"
+          title={`添加全部${label}`}
+          aria-label={`添加全部${label}`}
+          disabled={addDisabled}
+          onClick={onAddAll}
+        >
+          <Plus className="h-3 w-3" />
+          全部添加
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-1.5 text-[10px] text-white/45 hover:bg-red-500/10 hover:text-red-200 disabled:pointer-events-none disabled:opacity-30"
+          title={`删除全部${label}`}
+          aria-label={`删除全部${label}`}
+          disabled={removeDisabled}
+          onClick={onRemoveAll}
+        >
+          <X className="h-3 w-3" />
+          全部删除
+        </Button>
+      </div>
+    </div>
+  );
+}
 function DragHandle() {
   return (
     <span className="grid grid-cols-2 gap-0.5 text-white/35">
@@ -208,9 +235,8 @@ export function ProxyGroupAdvancedPanel({
     [proxyGroupNameOverrides],
   );
 
-  const generatedProxyNames = React.useMemo(() => {
-    if (nodes.length === 0) return [];
-    const generated = generateProxyGroups({
+  const generatedProxyGroups = React.useMemo(() => {
+    return generateProxyGroups({
       nodes,
       enabledModules: previewEnabledProxyGroups,
       ruleProviderBaseUrl,
@@ -222,7 +248,6 @@ export function ProxyGroupAdvancedPanel({
       builtinRuleEdits,
       proxyGroupNameOverrides,
     });
-    return generated.find((group) => group.name === target.name)?.proxies ?? [];
   }, [
     nodes,
     previewEnabledProxyGroups,
@@ -234,8 +259,11 @@ export function ProxyGroupAdvancedPanel({
     proxyGroupAdvanced,
     builtinRuleEdits,
     proxyGroupNameOverrides,
-    target.name,
   ]);
+  const generatedProxyNames = React.useMemo(() => {
+    if (nodes.length === 0) return [];
+    return generatedProxyGroups.find((group) => group.name === target.name)?.proxies ?? [];
+  }, [generatedProxyGroups, nodes.length, target.name]);
 
   const candidateMembers = React.useMemo(() => {
     const rawNames = [
@@ -274,6 +302,46 @@ export function ProxyGroupAdvancedPanel({
     const included = new Set(includedMembers.map((member) => member.key));
     return candidateMembers.filter((member) => !included.has(member.key));
   }, [candidateMembers, includedMembers]);
+  const nodeMembers = React.useMemo(
+    () => candidateMembers.filter(isNodeMember),
+    [candidateMembers],
+  );
+  const includedNodeMembers = React.useMemo(
+    () => includedMembers.filter(isNodeMember),
+    [includedMembers],
+  );
+  const excludedNodeMembers = React.useMemo(
+    () => excludedMembers.filter(isNodeMember),
+    [excludedMembers],
+  );
+  const proxyGroupMembers = React.useMemo(
+    () => candidateMembers.filter(isProxyGroupMember),
+    [candidateMembers],
+  );
+  const includedProxyGroupMembers = React.useMemo(
+    () => includedMembers.filter(isProxyGroupMember),
+    [includedMembers],
+  );
+  const excludedProxyGroupMembers = React.useMemo(
+    () => excludedMembers.filter(isProxyGroupMember),
+    [excludedMembers],
+  );
+  const cycleCreatingProxyGroupKeys = React.useMemo(
+    () =>
+      findCycleCreatingProxyGroupKeys({
+        candidates: excludedProxyGroupMembers,
+        generatedGroups: generatedProxyGroups,
+        targetName: target.name,
+      }),
+    [excludedProxyGroupMembers, generatedProxyGroups, target.name],
+  );
+  const addableProxyGroupMembers = React.useMemo(
+    () =>
+      excludedProxyGroupMembers.filter(
+        (member) => !cycleCreatingProxyGroupKeys.has(member.key),
+      ),
+    [cycleCreatingProxyGroupKeys, excludedProxyGroupMembers],
+  );
 
   const sourceOptions = React.useMemo(() => {
     const sourceIdsInNodes = new Set<string>();
@@ -329,6 +397,60 @@ export function ProxyGroupAdvancedPanel({
     },
     [excludedRefs, extraRefs, includedMembers, onChange],
   );
+
+  const addAllNodes = React.useCallback(() => {
+    onChange(
+      buildAddAllMembersPatch({
+        advanced,
+        currentMembers: includedMembers,
+        membersToAdd: excludedNodeMembers,
+      }),
+    );
+  }, [advanced, excludedNodeMembers, includedMembers, onChange]);
+
+  const removeAllNodes = React.useCallback(() => {
+    onChange(
+      buildRemoveAllMembersPatch({
+        advanced,
+        membersToRemove: nodeMembers,
+      }),
+    );
+  }, [advanced, nodeMembers, onChange]);
+
+  const addAllProxyGroups = React.useCallback(() => {
+    if (addableProxyGroupMembers.length > 0) {
+      onChange(
+        buildAddAllMembersPatch({
+          advanced,
+          currentMembers: includedMembers,
+          membersToAdd: addableProxyGroupMembers,
+        }),
+      );
+    }
+    const skippedCount =
+      excludedProxyGroupMembers.length - addableProxyGroupMembers.length;
+    if (skippedCount > 0) {
+      toast({
+        title: `已跳过 ${skippedCount} 个会形成循环的代理组`,
+        variant: "warning",
+      });
+    }
+  }, [
+    addableProxyGroupMembers,
+    advanced,
+    excludedProxyGroupMembers.length,
+    includedMembers,
+    onChange,
+  ]);
+
+  const removeAllProxyGroups = React.useCallback(() => {
+    onChange(
+      buildRemoveAllMembersPatch({
+        advanced,
+        membersToRemove: proxyGroupMembers,
+      }),
+    );
+  }, [advanced, onChange, proxyGroupMembers]);
 
   return (
     <div className="border-t border-white/10">
@@ -405,13 +527,34 @@ export function ProxyGroupAdvancedPanel({
       <div className="mx-3 h-px bg-white/10" />
 
       <div className="p-3">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          <BulkMemberActions
+            label="节点"
+            includedCount={includedNodeMembers.length}
+            totalCount={nodeMembers.length}
+            onAddAll={addAllNodes}
+            onRemoveAll={removeAllNodes}
+            addDisabled={excludedNodeMembers.length === 0}
+            removeDisabled={includedNodeMembers.length === 0}
+          />
+          <BulkMemberActions
+            label="代理组"
+            includedCount={includedProxyGroupMembers.length}
+            totalCount={proxyGroupMembers.length}
+            onAddAll={addAllProxyGroups}
+            onRemoveAll={removeAllProxyGroups}
+            addDisabled={excludedProxyGroupMembers.length === 0}
+            removeDisabled={includedProxyGroupMembers.length === 0}
+          />
+        </div>
+
         <div className={ADVANCED_PANEL_TITLE_ROW_CLASS}>
-          <div className="text-[11px] font-medium text-white/50">已启用节点</div>
+          <div className="text-[11px] font-medium text-white/50">已启用成员</div>
           <CountBadge>{includedMembers.length} 个</CountBadge>
         </div>
         {includedMembers.length === 0 ? (
           <div className="rounded border border-white/10 bg-white/[0.03] px-3 py-3 text-[11px] text-white/35">
-            暂无已启用的节点或代理组
+            暂无已启用成员
           </div>
         ) : (
           <div className="max-h-52 space-y-1 overflow-y-auto pr-1 custom-scrollbar">
@@ -457,11 +600,11 @@ export function ProxyGroupAdvancedPanel({
 
         <div className="mt-3">
           <div className={ADVANCED_PANEL_TITLE_ROW_CLASS}>
-            <div className="text-[11px] font-medium text-white/50">未启用节点</div>
+            <div className="text-[11px] font-medium text-white/50">未启用成员</div>
             <CountBadge>{excludedMembers.length} 个</CountBadge>
           </div>
           {excludedMembers.length === 0 ? (
-            <div className="text-[11px] text-white/35">暂无未启用的节点或代理组</div>
+            <div className="text-[11px] text-white/35">暂无未启用成员</div>
           ) : (
             <div className="max-h-52 overflow-y-auto pr-1 custom-scrollbar flex flex-wrap gap-1.5">
               {excludedMembers.map((member) => {
