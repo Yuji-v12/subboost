@@ -27,11 +27,18 @@ import {
   readSubscriptionSecrets,
   type SubscriptionRow,
 } from "./subscription-service";
+import { buildExpiredPlaceholderNode, isUserExpired, quotaFromUser } from "./user-quota";
 import { LOCAL_AUTO_UPDATE_MIN_SECONDS } from "./auto-update-policy";
 
 type AutoUpdateSubscriptionRow = SubscriptionRow & {
   owner: {
     username: string | null;
+    isAdmin: boolean;
+    maxSubscriptions: number;
+    maxNodesPerSubscription: number;
+    maxCustomTemplates: number;
+    maxImportSourcesPerType: number;
+    expiresAt: Date | null;
   };
 };
 
@@ -90,10 +97,11 @@ async function prepareLocalRefresh(
     snapshot,
     failedAt: attemptedAt,
   });
+  const maxNodesPerSubscription = quotaFromUser(subscription.owner).maxNodesPerSubscription;
   const refreshResult = prepareRefreshCacheResult({
     config: secrets.config,
     snapshot,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+    maxNodesPerSubscription,
   });
 
   return {
@@ -141,7 +149,7 @@ async function completeSuccess(params: {
     prepared: params.prepared,
     attemptedAt: params.attemptedAt,
     successAttemptedAt: cachedAt,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+    maxNodesPerSubscription: quotaFromUser(params.subscription.owner).maxNodesPerSubscription,
   });
   if (decision.kind !== "success") throw new Error(`Unexpected refresh completion decision: ${decision.kind}`);
   const config = { ...params.prepared.config, sources: params.prepared.snapshot.savedSources };
@@ -181,7 +189,7 @@ async function completeLocalRefresh(params: {
       currentAutoUpdateState: params.currentAutoUpdateState,
       prepared: params.prepared,
       attemptedAt: params.attemptedAt,
-      maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+      maxNodesPerSubscription: quotaFromUser(params.subscription.owner).maxNodesPerSubscription,
     });
 
     if (decision.kind === "all_sources_failed") {
@@ -223,7 +231,17 @@ async function recordUnexpectedFailure(params: {
 export async function runLocalSubscriptionAutoUpdateCron(now = new Date()): Promise<FinalCronUpdateSummary> {
   const subscriptions = (await prisma.subscription.findMany({
     where: { autoUpdateInterval: { not: null } },
-    include: { owner: { select: { username: true } }, autoUpdateState: true },
+    include: { owner: {
+          select: {
+            username: true,
+            isAdmin: true,
+            maxSubscriptions: true,
+            maxNodesPerSubscription: true,
+            maxCustomTemplates: true,
+            maxImportSourcesPerType: true,
+            expiresAt: true,
+          },
+        }, autoUpdateState: true },
   })) as AutoUpdateSubscriptionRow[];
 
   const accumulator = createCronUpdateAccumulator(subscriptions.length);
@@ -250,6 +268,43 @@ export async function runLocalSubscriptionAutoUpdateCron(now = new Date()): Prom
       }
 
       attemptStartedAt = new Date();
+
+      // Expired accounts: force placeholder node and skip external refresh.
+      if (isUserExpired(subscription.owner, now)) {
+        const cachedAt = attemptStartedAt;
+        await writeAutoUpdateState(
+          subscription.id,
+          {
+            externalFailureCount: 0,
+            failureSourceState: null,
+            lastFailedAt: null,
+            lastAttemptedAt: cachedAt,
+            disabledAt: null,
+            disabledReason: null,
+            disabledPreviousInterval: null,
+          },
+          {
+            encryptedNodes: encryptJson([buildExpiredPlaceholderNode()]),
+            lastUpdatedAt: cachedAt,
+            cacheExpiresAt: buildSubscriptionCacheExpiry(cachedAt),
+          }
+        );
+        applyCronUpdateOutcome(accumulator, {
+          status: "updated",
+          requestedHosts: [],
+          recordHosts: true,
+          updatedSubscription: {
+            subscriptionId: subscription.id,
+            subscriptionName: subscription.name,
+            userId: subscription.ownerId,
+            username: subscription.owner.username,
+            hosts: [],
+            nodeCount: 1,
+          },
+        });
+        continue;
+      }
+
       const prepared = await prepareLocalRefresh(subscription, currentAutoUpdateState, attemptStartedAt);
       requestedHosts = prepared.requestedHosts;
       const outcome = await completeLocalRefresh({

@@ -10,6 +10,8 @@ import type { SubBoostTemplateConfig } from "@subboost/core/types/template-confi
 import type { TemplateTab } from "@subboost/server-core/templates";
 import { decryptJsonObject, encryptJson } from "./crypto";
 import { prisma } from "./prisma";
+import { getUserQuotaContext } from "./user-admin-service";
+import { assertUserCanWriteTemplates, assertWithinTemplateQuota } from "./user-quota";
 
 type LocalTemplateTab = Extract<TemplateTab, "default" | "my">;
 
@@ -132,6 +134,12 @@ export async function getTemplateDetail(ownerId: string | null, id: string): Pro
 }
 
 export async function createTemplate(ownerId: string, body: unknown): Promise<LocalTemplateSummary> {
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) throw new Error("User not found.");
+  assertUserCanWriteTemplates(owner);
+  const currentCount = await prisma.localTemplate.count({ where: { ownerId } });
+  assertWithinTemplateQuota(owner, currentCount);
+
   const payload = asRecord(body);
   if (!payload) throw new Error("Invalid request body.");
 
@@ -153,6 +161,9 @@ export async function createTemplate(ownerId: string, body: unknown): Promise<Lo
 }
 
 export async function deleteTemplate(ownerId: string, id: string): Promise<boolean> {
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) return false;
+  assertUserCanWriteTemplates(owner);
   const row = await prisma.localTemplate.findFirst({ where: { id, ownerId }, select: { id: true } });
   if (!row) return false;
   await prisma.localTemplate.delete({ where: { id: row.id } });

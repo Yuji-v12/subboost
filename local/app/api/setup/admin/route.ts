@@ -4,6 +4,7 @@ import { getLocalAdminSetupCredentialError, LOCAL_ADMIN_CREDENTIAL_MESSAGES } fr
 import { apiError, getStringField, readJsonBody } from "@local/lib/http";
 import { prisma } from "@local/lib/prisma";
 import { sessionCookieOptions, signSession, SESSION_COOKIE } from "@local/lib/session";
+import { ADMIN_DEFAULT_QUOTA } from "@local/lib/user-quota";
 
 export async function POST(request: Request) {
   const body = await readJsonBody(request);
@@ -24,7 +25,17 @@ export async function POST(request: Request) {
 
   const passwordHash = await bcrypt.hash(password, 12);
   const admin = await prisma.localAdmin.create({
-    data: { username, passwordHash, lastLoginAt: new Date() },
+    data: {
+      username,
+      passwordHash,
+      lastLoginAt: new Date(),
+      isAdmin: true,
+      maxSubscriptions: ADMIN_DEFAULT_QUOTA.maxSubscriptions,
+      maxNodesPerSubscription: ADMIN_DEFAULT_QUOTA.maxNodesPerSubscription,
+      maxCustomTemplates: ADMIN_DEFAULT_QUOTA.maxCustomTemplates,
+      maxImportSourcesPerType: ADMIN_DEFAULT_QUOTA.maxImportSourcesPerType,
+      expiresAt: null,
+    },
     select: { id: true, username: true },
   });
 

@@ -1,12 +1,10 @@
-export const SUBBOOST_SITE_NAME = "SubBoost";
+export const SUBBOOST_SITE_NAME = "超级机场";
 
-export const SUBBOOST_PRODUCT_TITLE = "SubBoost - Clash 订阅转换与管理服务";
+export const SUBBOOST_PRODUCT_TITLE = "超级机场";
 
-export const SUBBOOST_PRODUCT_DESCRIPTION =
-  "Clash 订阅转换、生成与管理工具，支持链式代理、智能分流、多协议和多订阅聚合。";
+export const SUBBOOST_PRODUCT_DESCRIPTION = "超级机场";
 
-export const SUBBOOST_FOOTER_DESCRIPTION =
-  "Clash 订阅转换、生成和管理工具，让配置更简单";
+export const SUBBOOST_FOOTER_DESCRIPTION = "超级机场";
 
 export const SUBBOOST_THEME_COLOR = "#1e1b4b";
 
@@ -23,7 +21,7 @@ export const SUBBOOST_KEYWORDS = [
   "智能分流",
   "订阅聚合",
   "代理配置",
-  "SubBoost",
+  "超级机场",
   "Clash 配置",
   "多订阅管理",
 ];

@@ -1,5 +1,6 @@
 import { withCurrentAdmin } from "@local/lib/api-auth";
 import { apiError, json, readJsonBody } from "@local/lib/http";
+import { LocalUserPolicyError } from "@local/lib/user-quota";
 import {
   createSubscription,
   deleteSubscription,
@@ -26,6 +27,7 @@ export async function createSubscriptionResponse(request: Request) {
       const subscription = await createSubscription(admin.id, body);
       return json({ subscription }, 201);
     } catch (error) {
+      if (error instanceof LocalUserPolicyError) return apiError(error.message, error.code, error.status);
       return apiError(error instanceof Error ? error.message : "Unable to create subscription.", "BAD_REQUEST", 400);
     }
   });
@@ -51,6 +53,7 @@ export async function updateSubscriptionResponse(request: Request, id: string) {
       if (!subscription) return apiError("Subscription not found.", "NOT_FOUND", 404);
       return json({ subscription });
     } catch (error) {
+      if (error instanceof LocalUserPolicyError) return apiError(error.message, error.code, error.status);
       return apiError(error instanceof Error ? error.message : "Unable to update subscription.", "BAD_REQUEST", 400);
     }
   });
@@ -58,17 +61,27 @@ export async function updateSubscriptionResponse(request: Request, id: string) {
 
 export async function deleteSubscriptionResponse(id: string) {
   return withCurrentAdmin(async (admin) => {
-    const deleted = await deleteSubscription(admin.id, id);
-    if (!deleted) return apiError("Subscription not found.", "NOT_FOUND", 404);
-    return json({ success: true });
+    try {
+      const deleted = await deleteSubscription(admin.id, id);
+      if (!deleted) return apiError("Subscription not found.", "NOT_FOUND", 404);
+      return json({ success: true });
+    } catch (error) {
+      if (error instanceof LocalUserPolicyError) return apiError(error.message, error.code, error.status);
+      return apiError(error instanceof Error ? error.message : "Unable to delete subscription.", "BAD_REQUEST", 400);
+    }
   });
 }
 
 export async function refreshSubscriptionResponse(id: string) {
   return withCurrentAdmin(async (admin) => {
-    const result = await refreshSubscription(admin.id, id);
-    if (!result) return apiError("Subscription not found.", "NOT_FOUND", 404);
-    if (!result.ok) return json(result.response.body, result.response.status);
-    return json(result.body);
+    try {
+      const result = await refreshSubscription(admin.id, id);
+      if (!result) return apiError("Subscription not found.", "NOT_FOUND", 404);
+      if (!result.ok) return json(result.response.body, result.response.status);
+      return json(result.body);
+    } catch (error) {
+      if (error instanceof LocalUserPolicyError) return apiError(error.message, error.code, error.status);
+      return apiError(error instanceof Error ? error.message : "Unable to refresh subscription.", "BAD_REQUEST", 400);
+    }
   });
 }

@@ -137,12 +137,9 @@ export function HomeLayout({
       <div className="text-center mb-2 lg:mb-3 [@media(max-height:1000px)]:mb-1.5">
         <h1 className="font-bold leading-[1.08] mb-1 text-[clamp(1.25rem,2vw,2rem)] [@media(max-height:1000px)]:text-[clamp(1.25rem,1.7vw,1.75rem)]">
           <span className="bg-gradient-to-r from-white via-white to-white/60 bg-clip-text text-transparent">
-            SubBoost
+            超级机场
           </span>
         </h1>
-        <p className="text-white/50 max-w-2xl mx-auto leading-snug text-[clamp(0.75rem,1vw,0.95rem)] [@media(max-height:1000px)]:text-[0.875rem]">
-          Clash 订阅转换、生成与管理服务，支持链式代理、智能分流、多协议和多订阅聚合
-        </p>
       </div>
 
       {noticeSlot}

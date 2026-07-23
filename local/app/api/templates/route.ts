@@ -1,5 +1,6 @@
 import { getOptionalCurrentAdmin, localAdminRequiredResponse, withCurrentAdmin } from "@local/lib/api-auth";
 import { apiError, json, readJsonBody } from "@local/lib/http";
+import { LocalUserPolicyError } from "@local/lib/user-quota";
 import {
   createTemplate,
   deleteTemplate,
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
       const template = await createTemplate(admin.id, body);
       return json({ template }, 201);
     } catch (error) {
+      if (error instanceof LocalUserPolicyError) return apiError(error.message, error.code, error.status);
       return apiError(error instanceof Error ? error.message : "Unable to create template.", "BAD_REQUEST", 400);
     }
   });

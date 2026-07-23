@@ -36,6 +36,7 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   authOnly?: boolean;
+  adminOnly?: boolean;
 };
 
 const sharedNavItems: NavItem[] = [
@@ -51,6 +52,7 @@ const defaultNavItems: NavItem[] = [
 
 const localNavItems: NavItem[] = [
   ...sharedNavItems,
+  { href: "/dashboard/admin", label: "管理", icon: Shield, authOnly: true, adminOnly: true },
 ];
 
 function isNavItemActive(pathname: string, href: string): boolean {
@@ -115,7 +117,9 @@ export function Header({
   const { user } = useUserStore();
   const canShowPrivilegedItem = Boolean(privilegedMenuItem && user?.isAdmin && !user.isBanned);
   const navItems = mode === "local" ? localNavItems : defaultNavItems;
-  const visibleNavItems = user ? navItems : navItems.filter((i) => !i.authOnly);
+  const visibleNavItems = (user ? navItems : navItems.filter((i) => !i.authOnly)).filter(
+    (item) => !item.adminOnly || Boolean(user?.isAdmin)
+  );
   const showPrivilegedLink = mode === "default";
   const visiblePrivilegedItem = showPrivilegedLink && canShowPrivilegedItem ? privilegedMenuItem : null;
   const modeBadge: HeaderBrandBadge = {
@@ -132,13 +136,13 @@ export function Header({
             <Link href="/" className="group flex items-center gap-2">
               <Image
                 src="/logo.png"
-                alt="SubBoost"
+                alt="超级机场"
                 width={36}
                 height={36}
                 className="rounded-xl shadow-lg shadow-blue-500/25 transition-shadow group-hover:shadow-blue-500/40"
               />
               <span className="hidden text-xl font-bold leading-none bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent sm:inline-flex">
-                SubBoost
+                超级机场
               </span>
             </Link>
             <span className="hidden flex-col items-start justify-center gap-1 leading-none sm:flex">

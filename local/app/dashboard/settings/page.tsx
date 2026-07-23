@@ -24,7 +24,7 @@ export default function SettingsPage() {
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold mb-1">账户设置</h1>
-          <p className="text-white/50">本地管理员、订阅容量和运行端点</p>
+          <p className="text-white/50">账户信息、订阅容量和运行端点</p>
         </div>
       </div>
 
@@ -34,7 +34,7 @@ export default function SettingsPage() {
             <div className="rounded-lg bg-indigo-500/20 p-2 text-indigo-300">
               <ShieldCheck className="h-5 w-5" />
             </div>
-            <CardTitle className="text-base">本地管理员</CardTitle>
+            <CardTitle className="text-base">当前账户</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -42,8 +42,22 @@ export default function SettingsPage() {
               <p className="mt-1 font-medium">{user?.username || "未登录"}</p>
             </div>
             <div>
+              <p className="text-xs text-white/40">角色</p>
+              <p className="mt-1 font-medium">{user?.isAdmin ? "管理员" : "普通用户"}</p>
+            </div>
+            <div>
               <p className="text-xs text-white/40">已保存订阅</p>
               <p className="mt-1 font-medium">{user ? `${user.subscriptionCount} / ${user.quota.maxSubscriptions}` : "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-white/40">到期时间</p>
+              <p className="mt-1 font-medium">
+                {user?.isAdmin
+                  ? "永不过期"
+                  : user?.expiresAt
+                    ? `${new Date(user.expiresAt).toLocaleString("zh-CN", { hour12: false })}${user.isExpired ? "（已到期）" : ""}`
+                    : "永不过期"}
+              </p>
             </div>
             <Button variant="destructive" className="gap-2" onClick={() => void handleLogout()} disabled={!user}>
               <LogOut className="h-4 w-4" />

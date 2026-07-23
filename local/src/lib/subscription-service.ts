@@ -24,6 +24,16 @@ import { getAppUrl } from "./env";
 import { prisma } from "./prisma";
 import { fetchSourceUserInfoHeadersDirect, importSourceUrlDirect } from "./source-import";
 import { normalizeLocalAutoUpdateIntervalSeconds } from "./auto-update-policy";
+import { getUserQuotaContext } from "./user-admin-service";
+import {
+  assertUserCanWriteSubscriptions,
+  assertWithinImportSourceQuota,
+  assertWithinNodeQuota,
+  assertWithinSubscriptionQuota,
+  buildExpiredClashYaml,
+  isUserExpired,
+  quotaFromUser,
+} from "./user-quota";
 
 export const MAX_NODES_PER_SUBSCRIPTION = 10000;
 export const CACHE_TTL_SECONDS = 3600;
@@ -172,6 +182,10 @@ export async function createSubscription(ownerId: string, body: unknown): Promis
   if (!isRecord(body)) {
     throw new Error("Invalid request body.");
   }
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) throw new Error("User not found.");
+  assertUserCanWriteSubscriptions(owner);
+
   const name = normalizeSubscriptionName(body.name);
   if (!name) throw new Error("Subscription name is required.");
 
@@ -180,6 +194,12 @@ export async function createSubscription(ownerId: string, body: unknown): Promis
   if (urls.length === 0 && nodes.length === 0) throw new Error("At least one URL or node is required.");
 
   const config = buildLocalSubscriptionConfig(body);
+  assertWithinNodeQuota(owner, nodes.length);
+  assertWithinImportSourceQuota(owner, config);
+
+  const currentCount = await prisma.subscription.count({ where: { ownerId } });
+  assertWithinSubscriptionQuota(owner, currentCount);
+
   const autoUpdateInterval = normalizeLocalAutoUpdateIntervalSeconds(body.autoUpdateInterval);
   const subscriptionInfo = normalizeSubscriptionInfoForPersistence(body.subscriptionInfo) ?? {};
 
@@ -200,6 +220,10 @@ export async function createSubscription(ownerId: string, body: unknown): Promis
 
 export async function updateSubscription(ownerId: string, id: string, body: unknown): Promise<SubscriptionSummary | null> {
   if (!isRecord(body)) throw new Error("Invalid request body.");
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) throw new Error("User not found.");
+  assertUserCanWriteSubscriptions(owner);
+
   const current = await prisma.subscription.findFirst({ where: { id, ownerId }, include: { autoUpdateState: true } });
   if (!current) return null;
 
@@ -214,10 +238,13 @@ export async function updateSubscription(ownerId: string, id: string, body: unkn
     data.encryptedUrls = encryptJson(normalizeSubscriptionUrlList(body.urls));
   }
   if (hasNodes) {
-    data.encryptedNodes = encryptJson(normalizeSubscriptionNodeList(body.nodes));
+    const nodes = normalizeSubscriptionNodeList(body.nodes);
+    assertWithinNodeQuota(owner, nodes.length);
+    data.encryptedNodes = encryptJson(nodes);
   }
   if (hasConfig) {
     const config = buildLocalSubscriptionConfig(body, currentSecrets.config);
+    assertWithinImportSourceQuota(owner, config);
     data.encryptedConfig = encryptJson(config);
   }
   if ("subscriptionInfo" in body) {
@@ -253,6 +280,9 @@ export async function getSubscription(ownerId: string, id: string): Promise<Subs
 }
 
 export async function deleteSubscription(ownerId: string, id: string): Promise<boolean> {
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) return false;
+  assertUserCanWriteSubscriptions(owner);
   const row = await prisma.subscription.findFirst({ where: { id, ownerId }, select: { id: true } });
   if (!row) return false;
   await prisma.subscription.delete({ where: { id: row.id } });
@@ -328,6 +358,10 @@ async function persistRefreshSuccess(params: {
 }
 
 export async function refreshSubscription(ownerId: string, id: string) {
+  const owner = await getUserQuotaContext(ownerId);
+  if (!owner) return null;
+  assertUserCanWriteSubscriptions(owner);
+
   const row = await prisma.subscription.findFirst({ where: { id, ownerId }, include: { autoUpdateState: true } });
   if (!row) return null;
 
@@ -338,10 +372,11 @@ export async function refreshSubscription(ownerId: string, id: string) {
     storedNodes: secrets.nodes,
     ...buildSubscriptionFetchCallbacks(),
   });
+  const maxNodesPerSubscription = quotaFromUser(owner).maxNodesPerSubscription;
   const refreshResult = prepareRefreshCacheResult({
     config: secrets.config,
     snapshot,
-    maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+    maxNodesPerSubscription,
   });
 
   if (!refreshResult.ok) {
@@ -349,7 +384,7 @@ export async function refreshSubscription(ownerId: string, id: string) {
       ok: false as const,
       response: buildManualRefreshFailureResponse({
         refreshResult,
-        maxNodesPerSubscription: MAX_NODES_PER_SUBSCRIPTION,
+        maxNodesPerSubscription,
       }),
     };
   }
@@ -368,8 +403,37 @@ export async function refreshSubscription(ownerId: string, id: string) {
 }
 
 export async function generateSubscriptionYaml(token: string): Promise<GeneratedSubscriptionYaml | null> {
-  const row = await prisma.subscription.findUnique({ where: { token }, include: { autoUpdateState: true } });
+  const row = await prisma.subscription.findUnique({
+    where: { token },
+    include: {
+      autoUpdateState: true,
+      owner: {
+        select: {
+          isAdmin: true,
+          maxSubscriptions: true,
+          maxNodesPerSubscription: true,
+          maxCustomTemplates: true,
+          maxImportSourcesPerType: true,
+          expiresAt: true,
+        },
+      },
+    },
+  });
   if (!row) return null;
+
+  const ownerExpired = isUserExpired(row.owner);
+  if (ownerExpired) {
+    await prisma.subscription.update({ where: { id: row.id }, data: { lastAccessedAt: new Date() } });
+    return {
+      yaml: buildExpiredClashYaml(),
+      name: row.name,
+      subscriptionInfo: {},
+      cacheExpirySeconds: CACHE_TTL_SECONDS,
+      autoUpdateIntervalSeconds: row.autoUpdateInterval,
+      isAdmin: row.owner.isAdmin,
+    };
+  }
+
   const secrets = readSubscriptionSecrets(row);
   const { testUrl, testInterval } = getEffectiveTestOptions(secrets.config);
   const proxyProviders = buildProxyProvidersFromConfig(secrets.config, { testUrl, testInterval });
@@ -387,6 +451,6 @@ export async function generateSubscriptionYaml(token: string): Promise<Generated
     subscriptionInfo: secrets.subscriptionInfo,
     cacheExpirySeconds: CACHE_TTL_SECONDS,
     autoUpdateIntervalSeconds: row.autoUpdateInterval,
-    isAdmin: true,
+    isAdmin: row.owner.isAdmin,
   };
 }

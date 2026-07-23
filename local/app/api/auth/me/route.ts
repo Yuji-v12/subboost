@@ -1,6 +1,7 @@
-import { getCurrentAdmin, isSetupRequired } from "@local/lib/auth";
+import { asQuotaFields, getCurrentAdmin, isSetupRequired } from "@local/lib/auth";
 import { json } from "@local/lib/http";
 import { prisma } from "@local/lib/prisma";
+import { isUserExpired, quotaFromUser } from "@local/lib/user-quota";
 
 export async function GET() {
   const [setupRequired, admin] = await Promise.all([isSetupRequired(), getCurrentAdmin()]);
@@ -10,7 +11,8 @@ export async function GET() {
         prisma.localTemplate.count({ where: { ownerId: admin.id } }),
       ])
     : [0, 0];
-  const now = new Date().toISOString();
+  const now = new Date();
+  const expired = admin ? isUserExpired(admin, now) : false;
   return json({
     setupRequired,
     authenticated: Boolean(admin),
@@ -20,26 +22,22 @@ export async function GET() {
           username: admin.username,
           name: admin.username,
           avatarUrl: null,
-          trustLevel: 4,
+          trustLevel: admin.isAdmin ? 4 : 1,
           aiAssistantEnabled: false,
-          isAdmin: false,
+          isAdmin: admin.isAdmin,
           isBanned: false,
           active: true,
-          silenced: false,
+          silenced: expired,
           saveRequirementSatisfied: true,
-          saveRequirementSatisfiedAt: now,
-          createdAt: now,
-          updatedAt: now,
+          saveRequirementSatisfiedAt: now.toISOString(),
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
           accounts: [],
-          quota: {
-            maxSubscriptions: 9999,
-            maxNodesPerSubscription: 10000,
-            maxCustomTemplates: 9999,
-            maxImportSourcesPerType: 9999,
-            canUseSubscriptionLink: true,
-          },
+          quota: quotaFromUser(asQuotaFields(admin)),
           subscriptionCount,
           templateCount,
+          expiresAt: admin.expiresAt ? admin.expiresAt.toISOString() : null,
+          isExpired: expired,
         }
       : null,
   });

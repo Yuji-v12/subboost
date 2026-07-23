@@ -38,6 +38,8 @@ export interface User {
   quota: UserQuota;
   subscriptionCount: number;
   templateCount: number;
+  expiresAt?: string | null;
+  isExpired?: boolean;
 }
 
 interface UserState {
